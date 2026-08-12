@@ -225,10 +225,19 @@ the same exclusive lock as the read-back**, refusing with `409`
 leaving an agent running that nothing points at.
 
 The 409 carries the live record, because the loser needs the winner's `slot_key` to
-adopt that session instead of starting a second one. The frontend therefore claims
-**before seeding the first turn**: at that point its own slot has no turn yet, so
-losing is recoverable by removing it, whereas claiming after the seed would leave a
-running agent to either destroy or orphan.
+adopt that session instead of starting a second one. The dashboard's session-open path
+therefore claims **before seeding the first turn**: at that point its own slot has no
+turn yet, so losing is recoverable by removing it, whereas claiming after the seed
+would leave a running agent to either destroy or orphan. A first turn that never
+starts releases the link it claimed, or the record would point at a slot with no turn
+and every later click would resume that empty session.
+
+That release is only complete because the claim is a **pure reservation**: it writes
+link fields and no user-visible state. The lifecycle moves to `investigating` in a
+separate write, once the session is actually running. A claim that also stamped the
+lifecycle could not be fully released — clearing the link cannot restore a status the
+record may never have had, so a rejected first turn would strand a finished item
+reading as under investigation with nothing running.
 
 Naming a stale link is how a deliberate replacement is expressed — resuming a
 session whose slot was deleted rewrites the link, and the caller proves it is not
