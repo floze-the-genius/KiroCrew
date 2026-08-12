@@ -3,7 +3,7 @@ import { useIsMobile } from '../../hooks/useIsMobile'
 import { useDevMode } from '../../hooks/useDevMode'
 import { usePointerDrag } from '../../hooks/usePointerDrag'
 import { Reorder } from 'framer-motion'
-import { FileText, Bot, Workflow, ScrollText, MessageSquare, TerminalSquare, GitCompare, GitPullRequest, Plus, X, Hash, Pen, Columns2, Component, Globe, CircleDot, Folder, PanelRight, PanelBottom, Layers } from 'lucide-react'
+import { FileText, Bot, Workflow, ScrollText, MessageSquare, TerminalSquare, GitCompare, GitPullRequest, Plus, X, Hash, Pen, Columns2, Component, Globe, CircleDot, Folder, PanelRight, PanelBottom, Layers, ListTree } from 'lucide-react'
 import { PanelRightLight, PanelBottomSolid } from '../../components/icons/panels'
 import ActivityViewer from './ActivityViewer'
 import DiffPanel from '../../components/DiffPanel'
@@ -14,6 +14,8 @@ import FolderPanel from './FolderPanel'
 import WebPreviewPanel from '../../components/WebPreviewPanel'
 import CliPanel, { disposeTerminalSession, useDeleteTerminalSession } from '../../components/CliPanel'
 import { countLines } from '../../components/FileChangeChips'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../../api/client'
 import { useTerminalEnabled, useTerminalTitle } from '../../utils/terminalRegistry'
 import { adoptTab as adoptBottomTerminal } from '../../hooks/useBottomTerminal'
 import type { usePanelTabs, ViewKind, PanelTab, TabKind } from '../../hooks/usePanelTabs'
@@ -36,6 +38,7 @@ import { i18nT } from '../../i18n/t'
 const KIND_ICON: Record<TabKind, ReactNode> = {
   changes: <GitPullRequest size={16} />, issues: <CircleDot size={16} />, files: <FileText size={16} />, artifacts: <Component size={16} />, subagents: <Bot size={16} />, workflows: <Workflow size={16} />,
   logs: <ScrollText size={16} />, context: <Layers size={16} />, side: <MessageSquare size={16} />, terminal: <TerminalSquare size={16} />, browser: <Globe size={16} />,
+  summary: <ListTree size={16} />,
   file: <FileText size={16} />, diff: <GitCompare size={16} />, artifact: <Component size={16} />, folder: <Folder size={16} />,
   app: <PanelRight size={16} />,
 }
@@ -67,6 +70,7 @@ export const NEW_MENU_LABEL_KEY: Record<ViewKind, string> = {
   context: 'pages.chat.sidePanel.menu_context',
   side: 'pages.chat.sidePanel.menu_side',
   browser: 'pages.chat.sidePanel.menu_browser',
+  summary: 'pages.chat.sidePanel.menu_summary',
 }
 
 export const NEW_MENU_DESC_KEY: Record<ViewKind, string> = {
@@ -80,6 +84,7 @@ export const NEW_MENU_DESC_KEY: Record<ViewKind, string> = {
   context: 'pages.chat.sidePanel.menu_context_desc',
   side: 'pages.chat.sidePanel.menu_side_desc',
   browser: 'pages.chat.sidePanel.menu_browser_desc',
+  summary: 'pages.chat.sidePanel.menu_summary_desc',
 }
 
 /** Views offered by the + menu, in the three semantic groups the menu renders
@@ -101,6 +106,7 @@ const NEW_MENU_GROUPS: { kind: ViewKind; icon: ReactNode }[][] = [
   // Artifacts are auto-pinned and filtered out below; they are listed here so
   // this table stays the complete catalog of views.)
   [
+    { kind: 'summary', icon: <ListTree size={15} /> },
     { kind: 'changes', icon: <GitPullRequest size={15} /> },
     { kind: 'issues', icon: <CircleDot size={15} /> },
     { kind: 'files', icon: <FileText size={15} /> },
@@ -120,7 +126,7 @@ const NEW_MENU_GROUPS: { kind: ViewKind; icon: ReactNode }[][] = [
   ],
 ]
 
-const VIEW_KINDS = new Set<TabKind>(['changes', 'issues', 'files', 'artifacts', 'subagents', 'workflows', 'logs', 'context', 'side'])
+const VIEW_KINDS = new Set<TabKind>(['changes', 'issues', 'files', 'artifacts', 'subagents', 'workflows', 'logs', 'context', 'side', 'summary'])
 
 /** Views behind the Developer Mode consent gate (Settings > Developer) — the
  *  same gate the standalone Developer page uses. Both are raw instrumentation
@@ -131,21 +137,29 @@ const VIEW_KINDS = new Set<TabKind>(['changes', 'issues', 'files', 'artifacts', 
  *  `newMenuSections` drops. */
 const DEV_ONLY_VIEWS = new Set<ViewKind>(['logs', 'context'])
 
-/** Which `+`-menu entries are offered, given the two gates that hide entries:
- *  Terminal is hidden when the feature is disabled server-side, and the
- *  diagnostics views (Logs, Context breakdown) are hidden unless Developer Mode
- *  is on. The auto-managed pinned views (Changes / Files / Artifacts) are never
- *  listed; they appear on their own when they have content.
+/** Which `+`-menu entries are offered, given the gates that hide entries:
+ *  the diagnostics views (Logs, Context breakdown) are hidden unless Developer
+ *  Mode is on, and **Summary is hidden while session summaries are disabled**.
+ *  The auto-managed pinned views (Changes / Files / Artifacts) are never listed;
+ *  they appear on their own when they have content.
+ *
+ *  Summary is gated because the feature is opt-in and its settings toggle ships
+ *  separately: advertising the entry while `session_summary.enabled` is false
+ *  sends every reader to a panel that explains it is off and offers no way to
+ *  change that. Hiding the row is the only option that removes the dead end
+ *  rather than wording around it, and it reverses itself the moment the flag
+ *  flips.
  *
  *  Grouped, and **emptied groups are dropped**: with Developer Mode off the
  *  whole diagnostics group disappears. A group that filtered down to nothing
  *  would otherwise render as a separator with no rows after it. */
 export function newMenuSections(
-  opts: { devMode: boolean; terminalEnabled: boolean },
+  opts: { devMode: boolean; terminalEnabled: boolean; summaryEnabled: boolean },
 ): { kind: ViewKind; icon: ReactNode }[][] {
   return NEW_MENU_GROUPS
     .map(group => group.filter(item =>
       (opts.devMode || !DEV_ONLY_VIEWS.has(item.kind))
+      && (opts.summaryEnabled || item.kind !== 'summary')
       && !(PINNED_VIEWS as string[]).includes(item.kind),
     ))
     .filter(group => group.length > 0)
@@ -311,12 +325,28 @@ export default function SidePanel({
   const toolLog = useAppSelector(s => selectSlotToolLog(s, slot))
   const terminalEnabled = useTerminalEnabled()
   const devMode = useDevMode()
+  // Whether to offer the Summary row at all. Read from the panel's OWN endpoint
+  // and under the SAME query key the Summary tab uses, so this is one cheap
+  // request per slot that doubles as that tab's prefetch rather than a second
+  // source of truth. The endpoint is read-only and never triggers generation.
+  //
+  // Fails OPEN (`!== false`): while the flag is unknown the row is offered, so a
+  // slow request can never hide a feature that IS enabled. The reverse default
+  // would make the panel look missing, which is worse than the brief window it
+  // would close.
+  const { data: summaryMeta } = useQuery({
+    queryKey: ['session-summary', slot],
+    queryFn: () => api.sessionSummary(slot),
+    staleTime: Infinity,
+    retry: false,
+  })
+  const summaryEnabled = summaryMeta?.enabled !== false
   // The + menu / empty-state launcher hide Terminal when the feature is
   // disabled server-side and Context breakdown unless Developer Mode is on, and
   // never list the auto-managed pinned views (Changes / Files / Artifacts) —
   // those appear on their own when they have content (see the syncPinned
   // reconcile below).
-  const menuSections = newMenuSections({ devMode, terminalEnabled })
+  const menuSections = newMenuSections({ devMode, terminalEnabled, summaryEnabled })
   // The empty-state launcher shows the same entries flat: its two-column grid
   // has nowhere to put a separator, but it must not disagree with the menu
   // about ORDER, so it reads the groups rather than its own list.
@@ -631,7 +661,7 @@ export default function SidePanel({
             return (
               <div key={t.id} className="absolute inset-0">
                 <ActivityViewer
-                  view={t.kind as 'changes' | 'issues' | 'files' | 'artifacts' | 'subagents' | 'workflows' | 'logs' | 'context' | 'side'}
+                  view={t.kind as 'changes' | 'issues' | 'files' | 'artifacts' | 'subagents' | 'workflows' | 'logs' | 'context' | 'side' | 'summary'}
                   open onToggle={onClose} slot={slot}
                   subagents={subagents} toolLog={toolLog}
                   files={files}

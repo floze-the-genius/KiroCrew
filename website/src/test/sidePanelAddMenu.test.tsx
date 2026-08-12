@@ -122,8 +122,8 @@ describe('side panel + menu (shadcn dropdown)', () => {
 })
 
 describe('newMenuSections', () => {
-  const kinds = (o: { devMode: boolean; terminalEnabled: boolean }) =>
-    newMenuSections(o).map(g => g.map(i => i.kind))
+  const kinds = (o: { devMode: boolean; terminalEnabled: boolean; summaryEnabled?: boolean }) =>
+    newMenuSections({ summaryEnabled: true, ...o }).map(g => g.map(i => i.kind))
 
   it('partitions every catalogued view exactly once', () => {
     // Both gates open, so nothing is filtered but the auto-pinned views. Any
@@ -136,9 +136,21 @@ describe('newMenuSections', () => {
     expect(new Set(flat).size).toBe(flat.length)
   })
 
+  it('hides Summary while session summaries are disabled', () => {
+    // The feature is opt-in and its settings toggle ships separately, so
+    // advertising the row while the flag is false sends every reader to a panel
+    // that says it is off and offers no way to change that.
+    const flat = kinds({ devMode: true, terminalEnabled: true, summaryEnabled: false }).flat()
+    expect(flat).not.toContain('summary')
+    // Only that row goes — its group still carries the rest, so the group is not
+    // dropped and nothing else is collateral.
+    expect(kinds({ devMode: true, terminalEnabled: true, summaryEnabled: false })[0])
+      .toEqual(['issues', 'subagents', 'workflows'])
+  })
+
   it('groups by session output, workspaces, then diagnostics', () => {
     expect(kinds({ devMode: true, terminalEnabled: true })).toEqual([
-      ['issues', 'subagents', 'workflows'],
+      ['summary', 'issues', 'subagents', 'workflows'],
       ['side', 'browser'],
       ['logs', 'context'],
     ])
@@ -150,19 +162,19 @@ describe('newMenuSections', () => {
     // gate combination.
     for (const devMode of [false, true]) {
       for (const terminalEnabled of [false, true]) {
-        for (const group of newMenuSections({ devMode, terminalEnabled })) {
+        for (const group of newMenuSections({ devMode, terminalEnabled, summaryEnabled: true })) {
           expect(group.length).toBeGreaterThan(0)
         }
       }
     }
     // Both gates closed: diagnostics gone outright — two groups, not three with a hole.
     expect(kinds({ devMode: false, terminalEnabled: false })).toEqual([
-      ['issues', 'subagents', 'workflows'],
+      ['summary', 'issues', 'subagents', 'workflows'],
       ['side', 'browser'],
     ])
     // Terminal enabled doesn't change menu (terminal moved to app-wide panel).
     expect(kinds({ devMode: false, terminalEnabled: true })).toEqual([
-      ['issues', 'subagents', 'workflows'],
+      ['summary', 'issues', 'subagents', 'workflows'],
       ['side', 'browser'],
     ])
   })
