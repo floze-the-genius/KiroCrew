@@ -6933,7 +6933,8 @@
       "update_one": "{{count}} aggiornamento",
       "update_other": "{{count}} aggiornamenti",
       "updating_progress": "Aggiornamento {{done}}/{{total}}…",
-      "v": "v"
+      "v": "v",
+      "installed_app_find_in_library_and_enable": "{{name}} installato. È nella tua Library qui sotto — attivalo per abilitarlo."
     },
     "artifactDeployPage": {
       "0_00_mo": "~0,00 $/mese",

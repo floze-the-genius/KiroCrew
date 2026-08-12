@@ -7027,7 +7027,8 @@
       "update_one": "{{count}} обновление",
       "update_other": "{{count}} обновления",
       "updating_progress": "Обновление {{done}}/{{total}}...",
-      "v": "v"
+      "v": "v",
+      "installed_app_find_in_library_and_enable": "{{name}} установлено. Оно в вашей Library ниже — включите, чтобы активировать."
     },
     "artifactDeployPage": {
       "0_00_mo": "~$0.00/мес",

@@ -4798,7 +4798,8 @@
       "uninstall": "Uninstall",
       "update_one": "{{count}} update",
       "update_other": "{{count}} updates",
-      "v": "v"
+      "v": "v",
+      "installed_app_find_in_library_and_enable": "Installed {{name}}. It's in your Library below — turn it on to enable it."
     },
     "artifactDeployPage": {
       "0_00_mo": "~$0.00/mo",
