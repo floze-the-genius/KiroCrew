@@ -1503,8 +1503,44 @@ def forward_declared_env_enabled() -> bool:
         return False
 
 
-def default_socket_path() -> Path:
-    """Return the default gateway unix socket path."""
+def runtime_dir() -> Path:
+    """Directory holding the gateway's per-host runtime records.
+
+    Derived from the data home, NOT from ``mcp_gateway.socket_path``. That field
+    is empty until the broker has been configured, and the shareability records
+    have to exist BEFORE that: their whole purpose is to tell an operator who has
+    not enabled stubbing yet whether it is safe to. Keying off the socket made
+    the feature inert for exactly the audience it serves.
+
+    Same directory the socket itself defaults into, so when a broker does run its
+    files sit alongside these.
+    """
     home = os.environ.get("KIROCREW_HOME")
     base = Path(home) if home else config_dir()
-    return base / "mcp-gateway" / "gateway.sock"
+    return base / "mcp-gateway"
+
+
+def default_socket_path() -> Path:
+    """Return the default gateway unix socket path."""
+    return runtime_dir() / "gateway.sock"
+
+
+def records_dir(socket_path: str | Path = "") -> Path:
+    """Where per-host gateway records live, for BOTH the writer and the reader.
+
+    gatewayd writes next to its actual socket; the dashboard has to read the same
+    place, and it may run when no socket is configured at all. One resolver keeps
+    those two from diverging — a custom ``socket_path`` would otherwise have the
+    daemon writing the hazard ledger somewhere the page never looks.
+
+    Emptiness is tested on the STRING form, and a bare ``"."`` counts as unset:
+    ``Path("")`` constructs to ``PosixPath(".")``, so an empty Path is
+    indistinguishable from an explicit one and branching on truthiness alone
+    would resolve an unconfigured socket to the current working directory.
+    A real relative socket (``./gateway.sock``) is unaffected — its string form
+    is the filename, not ``"."``.
+    """
+    as_str = str(socket_path or "")
+    if not as_str or as_str == ".":
+        return runtime_dir()
+    return Path(as_str).parent

@@ -1233,7 +1233,13 @@ def routed_allowlist(monkeypatch: pytest.MonkeyPatch):
     import kiro_crew.config.loader as loader
 
     def _set(names: list[str]) -> None:
-        cfg = SimpleNamespace(mcp_gateway=SimpleNamespace(stub_servers=list(names)))
+        # ``socket_path`` is part of the real ``McpGatewayConfig`` and the
+        # handler reads it to locate the observed-hazard ledger. A double that
+        # omitted it would make the row builder raise on a field production
+        # always has — empty is the honest stand-in for "no broker configured".
+        cfg = SimpleNamespace(
+            mcp_gateway=SimpleNamespace(stub_servers=list(names), socket_path="")
+        )
         monkeypatch.setattr(loader.KiroCrewConfig, "load", staticmethod(lambda: cfg))
 
     return _set
