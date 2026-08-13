@@ -11,7 +11,30 @@ from __future__ import annotations
 import sys
 
 from kiro_crew.service import linux, macos
-from kiro_crew.service.common import Platform, current_platform
+from kiro_crew.service.common import Platform, current_platform, headless_auth_warning
+
+
+def _print_headless_auth_warning() -> None:
+    """Surface a dropped API-key credential right after a successful install.
+
+    Printed on stdout beside the other post-install lines rather than raised:
+    the service IS installed and running at this point, and the gateway will
+    still serve — it just cannot see the operator's credential. Silent on a
+    login-based or already-configured install.
+
+    Non-fatal by construction, like the AppArmor profile message above it. The
+    check resolves the crew home to locate ``.env``, and by the time it runs the
+    unit is written and started — so an exception here would print a traceback
+    over a successful install and return non-zero for a machine state that is
+    actually fine. A diagnostic that cannot fire is strictly better than an
+    install that reports failure.
+    """
+    try:
+        warning = headless_auth_warning()
+    except Exception:  # noqa: BLE001 - diagnostic must never fail the install
+        return
+    if warning:
+        print(warning)
 
 
 def _unsupported_message() -> None:
@@ -48,6 +71,7 @@ def install_service() -> int:
         # non-fatal: a failure warns and leaves the service running.
         if profile.message:
             print(f"   {'⚠️ ' if not profile.ok else ''}{profile.message}")
+        _print_headless_auth_warning()
         print()
         print("   Status: kirocrew service status")
         print("   Logs:   kirocrew logs -f")
@@ -61,6 +85,7 @@ def install_service() -> int:
             return 1
         print("✅ kirocrew service installed and started.")
         print(f"   plist: {macos.PLIST_PATH}")
+        _print_headless_auth_warning()
         print()
         print("   Status: kirocrew service status")
         print(f"   Logs:   tail -f {macos.STDOUT_LOG}")

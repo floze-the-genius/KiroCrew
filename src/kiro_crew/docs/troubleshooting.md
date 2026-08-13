@@ -36,6 +36,35 @@ kiro-cli login
 `kirocrew doctor` reports the binary and the login state on separate lines, so
 check both.
 
+### Dashboard asks for sign-in but `kiro-cli` is already authenticated
+
+Typical on a headless host that authenticates `kiro-cli` with an API key rather
+than `kiro-cli login`. `kirocrew doctor` prints a signed-in state while the
+dashboard's setup gate still asks for a device login, and `/api/models` plus
+usage polling answer 503.
+
+The readiness probe forwards `KIRO_API_KEY` to `kiro-cli whoami`, but only from
+the **gateway's own** environment. Exporting it in a shell after the gateway is
+running does not reach it, and neither launchd nor systemd passes the installing
+shell's environment to the service. Put it where the gateway reads it at boot:
+
+```bash
+touch ~/.kiro/crew/.env && chmod 600 ~/.kiro/crew/.env
+printf '%s\n' "KIRO_API_KEY=$KIRO_API_KEY" >> ~/.kiro/crew/.env
+kirocrew service restart   # or restart however you run the gateway
+```
+
+The `chmod` comes first on purpose: under a standard `022` umask a file created
+by the append alone is `0644`, and the gateway only forces `0600` the next time
+it reads it — so the key would be readable by other local users until then. Every
+key in `~/.kiro/crew/.env` is loaded into the gateway's environment at startup.
+Do not put the key in the systemd unit or in `/etc/kirocrew/kirocrew.env` — both
+are readable by any local user. `kirocrew service install` warns when it sees a
+key in your shell that the service will not inherit.
+
+Releases before 0.3.0 filtered `KIRO_API_KEY` out of the probe entirely, so no
+placement works on those; use `kiro-cli login` or upgrade.
+
 ### Agent config missing or stale
 
 ```bash

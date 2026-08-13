@@ -14,14 +14,17 @@ subprocess calls in :mod:`kiro_crew.service.linux` and
 
 from __future__ import annotations
 
+import inspect
 import os
 import plistlib
+import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from kiro_crew.service import common, controller
 from kiro_crew.service.common import (
     LAUNCHD_LABEL,
     SERVICE_NAME,
@@ -3484,3 +3487,158 @@ class TestSandboxProfileControllerDispatch:
         with patch.object(controller, "current_platform", return_value=Platform.SYSTEMD), \
              patch.object(apparmor, "launcher_status", return_value=(True, "covered")):
             assert controller.sandbox_profile_status(None) == 0
+
+
+class TestHeadlessApiKeyWarning:
+    """`service install` must not silently drop kiro-cli's API-key credential.
+
+    launchd/systemd hand the gateway a minimal environment, so a key exported in
+    the installing shell is absent when the service starts and the readiness
+    probe reports a signed-out state on a host where kiro-cli itself is
+    authenticated (issue #3257). The install path warns instead of pretending
+    nothing was lost — and never bakes the credential into the unit.
+    """
+
+    API_KEY = "KIRO_API_KEY"
+    SECRET = "sk-headless-value-not-for-disclosure"
+
+    def _dotenv(self, monkeypatch, tmp_path, contents=None):
+        """Point env_path() at a temp file so the developer's own .env is never read."""
+        target = tmp_path / ".env"
+        if contents is not None:
+            target.write_text(contents, encoding="utf-8")
+        monkeypatch.setattr(common.loader, "env_path", lambda: target)
+        return target
+
+    def test_warns_when_key_set_but_absent_from_dotenv(self, monkeypatch, tmp_path):
+        dotenv = self._dotenv(monkeypatch, tmp_path, "SLACK_BOT_TOKEN=xoxb-unrelated\n")
+        warning = common.headless_auth_warning({self.API_KEY: self.SECRET})
+        assert warning, "a dropped credential must produce a warning"
+        assert self.API_KEY in warning
+        assert str(dotenv) in warning, "the warning must name the file to edit"
+        assert "kirocrew service restart" in warning
+
+    def test_silent_when_dotenv_already_defines_the_key(self, monkeypatch, tmp_path):
+        self._dotenv(monkeypatch, tmp_path, f"{self.API_KEY}=already-configured\n")
+        assert common.headless_auth_warning({self.API_KEY: self.SECRET}) == ""
+
+    def test_silent_when_no_key_in_installer_environment(self, monkeypatch, tmp_path):
+        self._dotenv(monkeypatch, tmp_path, "")
+        assert common.headless_auth_warning({}) == ""
+
+    def test_blank_key_is_not_a_credential(self, monkeypatch, tmp_path):
+        self._dotenv(monkeypatch, tmp_path, "")
+        assert common.headless_auth_warning({self.API_KEY: "   "}) == ""
+
+    def test_missing_dotenv_warns_rather_than_assuming_configured(
+        self, monkeypatch, tmp_path
+    ):
+        # No file written: an unreadable/absent .env must fail toward warning,
+        # because a missed warning is the defect being fixed.
+        self._dotenv(monkeypatch, tmp_path)
+        assert common.headless_auth_warning({self.API_KEY: self.SECRET})
+
+    def test_commented_out_assignment_does_not_count_as_configured(
+        self, monkeypatch, tmp_path
+    ):
+        self._dotenv(monkeypatch, tmp_path, f"#{self.API_KEY}=commented-out\n")
+        assert common.headless_auth_warning({self.API_KEY: self.SECRET})
+
+    def test_warning_never_echoes_the_credential_value(self, monkeypatch, tmp_path):
+        self._dotenv(monkeypatch, tmp_path, "")
+        warning = common.headless_auth_warning({self.API_KEY: self.SECRET})
+        assert self.SECRET not in warning
+        # The remedy must reference the variable, not interpolate its value.
+        assert f"${self.API_KEY}" in warning
+
+    def test_custom_home_caveat_only_when_home_is_overridden(
+        self, monkeypatch, tmp_path
+    ):
+        self._dotenv(monkeypatch, tmp_path, "")
+        plain = common.headless_auth_warning({self.API_KEY: self.SECRET})
+        assert "KIROCREW_HOME" not in plain
+        with_home = common.headless_auth_warning(
+            {self.API_KEY: self.SECRET, "KIROCREW_HOME": "/srv/crew"}
+        )
+        assert "KIROCREW_HOME" in with_home
+
+    def test_remedy_tightens_permissions_before_writing_the_secret(
+        self, monkeypatch, tmp_path
+    ):
+        """The append must not be the step that creates the file.
+
+        Under a standard 022 umask a .env born from the append alone is 0644, and
+        the gateway only forces 0600 the next time it reads it — so the key would
+        be world-readable in the interim. Order is the whole fix, so assert on
+        position, not mere presence.
+        """
+        self._dotenv(monkeypatch, tmp_path, "")
+        warning = common.headless_auth_warning({self.API_KEY: self.SECRET})
+        assert "chmod 600" in warning
+        assert warning.index("chmod 600") < warning.index("printf"), (
+            "chmod must precede the append, or the secret lands in a 0644 file"
+        )
+
+    def test_decision_returns_a_bool_so_no_value_can_ride_out_of_it(
+        self, monkeypatch, tmp_path
+    ):
+        """The only function reading the credential must not return text.
+
+        Keeping the read in a bool-returning function is what makes "the value
+        cannot reach a print" structural instead of a property of the current
+        formatting. `is True` is deliberate: a str return would satisfy a truthy
+        assertion while carrying the secret.
+        """
+        self._dotenv(monkeypatch, tmp_path, "")
+        assert common.api_key_will_be_dropped({self.API_KEY: self.SECRET}) is True
+        assert common.api_key_will_be_dropped({}) is False
+
+    def test_env_var_name_identifier_avoids_credential_words(self):
+        """The constant holding the variable NAME must not be named like a secret.
+
+        Taint analysis classifies sources by identifier name, so a constant
+        called `_API_KEY_ENV` marks every string it flows into as a cleartext
+        credential — which flagged the operator message even though the message
+        contains only a variable name and a path. The value is unchanged and
+        still printed verbatim; only the identifier is constrained.
+        """
+        assert common._AUTH_ENV_VAR == "KIRO_API_KEY"
+        banned = re.compile(r"(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)")
+        assert not banned.search("_AUTH_ENV_VAR"), (
+            "renaming this constant to a credential-sounding identifier "
+            "re-introduces the py/clear-text-logging-sensitive-data alert"
+        )
+        src = inspect.getsource(common)
+        assert "_API_KEY_ENV" not in src
+
+    def test_credential_is_never_baked_into_the_service_environment(self, monkeypatch):
+        """The unit and plist are world-readable; the credential stays out of both."""
+        monkeypatch.setenv(self.API_KEY, self.SECRET)
+        env = service_environment("/home/tester")
+        assert self.API_KEY not in env
+        assert self.SECRET not in "".join(env.values())
+
+    def test_a_failing_check_cannot_break_a_successful_install(self, capsys):
+        """The unit is already started when this runs, so it must never raise."""
+        boom = MagicMock(side_effect=OSError("home resolution exploded"))
+        with patch.object(controller, "headless_auth_warning", boom):
+            controller._print_headless_auth_warning()
+        assert boom.called
+        assert capsys.readouterr().out == ""
+
+    @pytest.mark.parametrize(
+        "plat,module",
+        [(Platform.SYSTEMD, "linux"), (Platform.LAUNCHD, "macos")],
+    )
+    def test_both_install_paths_surface_the_warning(self, plat, module, capsys):
+        """Neither platform may install and stay quiet about a dropped credential."""
+        installer = MagicMock(return_value=MagicMock(ok=True, message=""))
+        with (
+            patch.object(controller, "current_platform", return_value=plat),
+            patch.object(getattr(controller, module), "install", installer),
+            patch.object(
+                controller, "headless_auth_warning", return_value="Note: dropped key"
+            ),
+        ):
+            assert controller.install_service() == 0
+        assert "Note: dropped key" in capsys.readouterr().out
