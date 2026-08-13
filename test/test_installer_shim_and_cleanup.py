@@ -602,6 +602,12 @@ def test_clean_stale_purges_meshclaw_command_playwright(tmp_path, monkeypatch):
                         ],
                     },
                     "@playwright/mcp": {"command": "kirocrew", "args": ["mcp-playwright-proxy"]},
+                    # Launched by kirocrew but with a verb that still EXISTS,
+                    # and deliberately NOT one of KIROCREW_BIN_MCP_SERVERS (those
+                    # are purged by the separate install-path rule). Proves the
+                    # new purge matches the deleted VERB, not "anything kirocrew
+                    # launches".
+                    "operator-own-server": {"command": "kirocrew", "args": ["mcp-core"]},
                     "ai-community-slack-mcp": {"command": "ai-community-slack-mcp", "args": []},
                 }
             },
@@ -615,7 +621,13 @@ def test_clean_stale_purges_meshclaw_command_playwright(tmp_path, monkeypatch):
 
     assert "npm:@playwright/mcp" not in remaining  # stale meshclaw-command entry purged
     assert "npm:@playwright/mcp" in removed
-    assert "@playwright/mcp" in remaining  # the live kirocrew proxy kept
+    # Was "the live kirocrew proxy kept". It is no longer live: the
+    # `mcp-playwright-proxy` verb was deleted with the proxy, so this entry now
+    # launches a command that does not exist and takes every kiro-cli session
+    # down with a ModuleNotFoundError. Purging it IS the upgrade path.
+    assert "@playwright/mcp" not in remaining
+    assert "@playwright/mcp" in removed
+    assert "operator-own-server" in remaining  # other kirocrew-launched verb kept
     assert "ai-community-slack-mcp" in remaining  # user server kept
 
 
