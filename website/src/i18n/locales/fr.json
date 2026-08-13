@@ -5175,7 +5175,11 @@
       "tunnel_connected_token_valid_auto_refresh": "Tunnel connecté. Jeton valide {{valid}} ; actualisation automatique {{refresh}}.",
       "tunnel_connecting": "Connexion du tunnel…",
       "tunnel_error": "erreur de tunnel",
-      "tunnel_state": "Tunnel {{state}}."
+      "tunnel_state": "Tunnel {{state}}.",
+      "n_unread": "Non lus : {{n}}",
+      "switch_crew_active": "Changer d'équipe, actuellement {{name}}",
+      "switch_crew_active_unread": "Changer d'équipe, actuellement {{name}}, non lus ailleurs : {{n}}",
+      "stopped": "arrêté"
     },
     "instancesViewport": {
       "connecting": "Connexion…",
@@ -11176,7 +11180,16 @@
         "tier_spec": "{{instanceType}} · {{arch}} · {{vcpu}} vCPU · {{ramGb}} GB RAM · {{diskGb}} GB disk",
         "start": "Start",
         "start_crew": "Start {{name}}",
-        "sign_in_unconfirmed": "We could not confirm the sign-in. The code below may still work — finish it here, then connect the crew."
+        "sign_in_unconfirmed": "We could not confirm the sign-in. The code below may still work — finish it here, then connect the crew.",
+        "more_actions": "Plus d'actions pour {{name}}",
+        "edit_settings": "Modifier les paramètres",
+        "edit_crew": "Modifier {{name}}",
+        "save_changes": "Enregistrer les modifications",
+        "saving": "Enregistrement…",
+        "failed_to_save_crew": "Impossible d'enregistrer cette équipe",
+        "edit_reconnect_note": "Modifier l'hôte, le port ou la méthode de connexion ferme le tunnel actuel. Reconnectez-vous quand vous le souhaitez.",
+        "remove": "Retirer…",
+        "transport_locked_note": "Kiro Crew relie cette équipe à ses ressources AWS via son identité de connexion : la méthode et la cible ne sont donc pas modifiables ici."
       },
       "webhooksPanel": {
         "inbound_webhooks": "Webhooks entrants",
