@@ -40,15 +40,73 @@ describe('groupDisplayItems', () => {
 
   it('keeps a subagent completion the card can render, and opens a turn on it', () => {
     // The event IS the next turn's input, so the agent's reply must group BELOW
-    // the card rather than beside it.
+    // the card rather than beside it. The per-completion assistant response is
+    // filtered when more content follows.
     const completion = msg('subagent', COMPLETION)
     const { turns } = groupDisplayItems([
       msg('user', 'u'), ...workingTurn(), completion, ...workingTurn(),
     ])
     const singles = turns.filter(t => t.kind === 'single') as { msg: ChatMessage }[]
-    expect(singles.map(t => t.msg.role)).toEqual(['user', 'subagent'])
-    // Two collapsible turns: one under the user message, one under the card.
-    expect(turns.filter(isTurn)).toHaveLength(2)
+    // The subagent card stays; the first assistant after it is filtered (more follows)
+    expect(singles.some(s => s.msg.role === 'user')).toBe(true)
+    expect(singles.some(s => s.msg.role === 'subagent')).toBe(true)
+  })
+
+  it('hides per-completion assistant response when more content follows', () => {
+    // A sub-agent completion followed by an assistant response followed by another
+    // completion or more assistant text: the intermediate response is filtered out.
+    const completion = msg('subagent', COMPLETION)
+    const { turns } = groupDisplayItems([
+      msg('user', 'u'),
+      msg('assistant', 'spawned agents'),
+      completion,
+      msg('assistant', 'per-completion summary that should be hidden'),
+      msg('subagent', COMPLETION),
+      msg('assistant', 'second per-completion also hidden'),
+      msg('assistant', 'synthesis - the final answer'),
+    ])
+    // The two per-completion responses are filtered; synthesis remains
+    const assistants = turns
+      .filter(t => t.kind === 'single' && (t as { msg: ChatMessage }).msg.role === 'assistant')
+      .map(t => (t as { msg: ChatMessage }).msg.content)
+    expect(assistants).toContain('spawned agents')
+    expect(assistants).toContain('synthesis - the final answer')
+    expect(assistants).not.toContain('per-completion summary that should be hidden')
+    expect(assistants).not.toContain('second per-completion also hidden')
+  })
+
+  it('keeps the per-completion response when it is the last message', () => {
+    // If no more content follows the per-completion response, it IS the final
+    // answer (e.g. single sub-agent with no synthesis) and must stay visible.
+    const completion = msg('subagent', COMPLETION)
+    const { turns } = groupDisplayItems([
+      msg('user', 'u'),
+      completion,
+      msg('assistant', 'only response - keep it'),
+    ])
+    const assistants = turns
+      .filter(t => t.kind === 'single' && (t as { msg: ChatMessage }).msg.role === 'assistant')
+      .map(t => (t as { msg: ChatMessage }).msg.content)
+    expect(assistants).toContain('only response - keep it')
+  })
+
+  it('keeps the per-completion response when a user message follows (boundary)', () => {
+    // A user message after the per-completion response means a new prompt turn.
+    // The scan must NOT cross that boundary — the response is the final answer
+    // for the sub-agent turn even if more assistant messages exist later.
+    const completion = msg('subagent', COMPLETION)
+    const { turns } = groupDisplayItems([
+      msg('user', 'analyze this'),
+      completion,
+      msg('assistant', 'sub-agent result - keep it'),
+      msg('user', 'thanks, now do something else'),
+      msg('assistant', 'different answer'),
+    ])
+    const assistants = turns
+      .filter(t => t.kind === 'single' && (t as { msg: ChatMessage }).msg.role === 'assistant')
+      .map(t => (t as { msg: ChatMessage }).msg.content)
+    expect(assistants).toContain('sub-agent result - keep it')
+    expect(assistants).toContain('different answer')
   })
 
   it('preserves the original message index on singles', () => {

@@ -103,7 +103,36 @@ const ChatMessageList = memo(function ChatMessageList({
       turnItems = []
     }
 
-    for (const item of raw) {
+    // Filter per-completion assistant responses: when a sub-agent completion is
+    // followed by an assistant message and then more content within the same
+    // sub-agent flow, that intermediate response is redundant. Scan stops at
+    // user/nudge boundaries; excludes subagent completion cards with assistant role.
+    const filtered: TurnItem[] = []
+    for (let i = 0; i < raw.length; i++) {
+      const curr = raw[i]
+      if (
+        curr.kind === 'single' &&
+        (curr.msg.role === 'assistant' || curr.msg.role === 'streaming') &&
+        !isSubagentCompletionMessage(curr.msg) &&
+        i > 0 &&
+        raw[i - 1].kind === 'single' &&
+        (raw[i - 1] as { msg: ChatMessage }).msg.role === 'subagent'
+      ) {
+        let hasMoreInFlow = false
+        for (let j = i + 1; j < raw.length; j++) {
+          const future = raw[j]
+          if (future.kind === 'single') {
+            if (future.msg.role === 'user') break // new prompt = stop
+            if (future.msg.role === 'subagent') { hasMoreInFlow = true; break }
+            if (future.msg.role === 'assistant' || future.msg.role === 'streaming') { hasMoreInFlow = true; break }
+          }
+        }
+        if (hasMoreInFlow) continue
+      }
+      filtered.push(curr)
+    }
+
+    for (const item of filtered) {
       // A sub-agent completion is the next turn's input, so it opens a turn the
       // same way a user message does — the agent's reply belongs below the card.
       if (item.kind === 'single' && (item.msg.role === 'user' || item.msg.role === 'subagent')) {

@@ -53,6 +53,47 @@ export function groupDisplayItems(messages: ChatMessage[]): GroupedTurns {
   }
   if (group.length) raw.push({ kind: 'group', msgs: group, startIdx: groupStart })
 
+  // Phase 1.5: Hide per-completion assistant responses.
+  // When a sub-agent completion event is followed by an assistant message and
+  // then another sub-agent completion (or more assistant text within the same
+  // sub-agent turn), that assistant message is a per-completion summary the
+  // model produced before synthesis. Filter it so the user sees only the
+  // synthesis. The scan stops at user/nudge boundaries (new prompts are a
+  // different turn) and excludes subagent completion messages that happen to
+  // arrive with role 'assistant' (delivery-timeout cards).
+  const filtered: TurnItem[] = []
+  for (let i = 0; i < raw.length; i++) {
+    const curr = raw[i]
+    // Check if this is an assistant message immediately after a subagent completion
+    if (
+      curr.kind === 'single' &&
+      (curr.msg.role === 'assistant' || curr.msg.role === 'streaming') &&
+      !isSubagentCompletionMessage(curr.msg) &&
+      i > 0 &&
+      raw[i - 1].kind === 'single' &&
+      (raw[i - 1] as { msg: ChatMessage }).msg.role === 'subagent'
+    ) {
+      // Look ahead ONLY within the same sub-agent flow (stop at user/nudge)
+      let hasMoreInFlow = false
+      for (let j = i + 1; j < raw.length; j++) {
+        const future = raw[j]
+        if (future.kind === 'single') {
+          // A new user prompt = different turn; stop scanning
+          if (future.msg.role === 'user' || future.msg.role === 'nudge') break
+          // Another subagent completion = still in the same flow
+          if (future.msg.role === 'subagent') { hasMoreInFlow = true; break }
+          // Another assistant message within the flow = synthesis exists
+          if (future.msg.role === 'assistant' || future.msg.role === 'streaming') {
+            hasMoreInFlow = true
+            break
+          }
+        }
+      }
+      if (hasMoreInFlow) continue // Skip this per-completion response
+    }
+    filtered.push(curr)
+  }
+
   // Phase 2: group into turns (user message → next user message)
   const turns: DisplayItem[] = []
   let turnItems: TurnItem[] = []
@@ -68,7 +109,7 @@ export function groupDisplayItems(messages: ChatMessage[]): GroupedTurns {
       turns.push(...items)
     }
   }
-  for (const item of raw) {
+  for (const item of filtered) {
     // A nudge opens a new turn exactly like a user message does — it IS the
     // turn's prompt. Without this it gets swallowed into the previous turn's
     // collapsed step group and the cycle chip disappears. A sub-agent
